@@ -24,7 +24,6 @@ from datetime import datetime, timezone
 from dateutil import parser as dtparser
 from io import BytesIO
 import hashlib
-import openpyxl
 
 # ==================== CONFIGURAÇÕES ====================
 
@@ -257,7 +256,7 @@ def processar_pendencias(project_config):
     Processa pendências de um projeto específico.
     
     Returns:
-        tuple: (df_pendencias, estatisticas, arquivo_excel_bytes)
+        tuple: (df_pendencias, estatisticas, arquivo_excel_bytes, arquivo_csv_bytes)
     """
     base_url = project_config["kobo_base_url"]
     token = project_config["kobo_token"]
@@ -355,12 +354,15 @@ def processar_pendencias(project_config):
         "total_revisitas": len(df_revisitas)
     }
     
-    # 8. Gerar arquivo Excel
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df_pendencias.to_excel(writer, sheet_name='Pendências', index=False)
-    
-    arquivo_excel = output.getvalue()
+    # 8. Gerar arquivo Excel (com fallback para CSV se openpyxl não estiver disponível)
+    arquivo_excel = None
+    try:
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df_pendencias.to_excel(writer, sheet_name='Pendências', index=False)
+        arquivo_excel = output.getvalue()
+    except ImportError:
+        st.warning("⚠️ Biblioteca openpyxl não encontrada. Download disponível apenas em CSV.")
     
     # 9. Gerar CSV para upload
     csv_buffer = BytesIO()
@@ -606,16 +608,29 @@ def main():
                 st.subheader("📋 Lista de Pendências")
                 st.dataframe(df_pendencias, use_container_width=True, height=400)
                 
-                # Download Excel
+                # Timestamp para nome do arquivo
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                nome_arquivo = f"pendencias_{project_data['project_name']}_{timestamp}.xlsx"
                 
+                # Download Excel (se disponível)
+                if arquivo_excel:
+                    nome_arquivo_excel = f"pendencias_{project_data['project_name']}_{timestamp}.xlsx"
+                    st.download_button(
+                        label="📥 Baixar Excel",
+                        data=arquivo_excel,
+                        file_name=nome_arquivo_excel,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        type="primary",
+                        use_container_width=True
+                    )
+                
+                # Download CSV (sempre disponível)
+                nome_arquivo_csv = f"pendencias_{project_data['project_name']}_{timestamp}.csv"
                 st.download_button(
-                    label="📥 Baixar Excel",
-                    data=arquivo_excel,
-                    file_name=nome_arquivo,
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    type="primary",
+                    label="📥 Baixar CSV" if arquivo_excel else "📥 Baixar Relatório (CSV)",
+                    data=arquivo_csv,
+                    file_name=nome_arquivo_csv,
+                    mime="text/csv",
+                    type="secondary" if arquivo_excel else "primary",
                     use_container_width=True
                 )
                 
