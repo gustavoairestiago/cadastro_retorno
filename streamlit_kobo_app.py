@@ -654,55 +654,56 @@ def main():
         
         st.markdown("---")
         st.subheader("📈 Estatísticas")
-            
-            col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
-                st.metric("Total Master", stats["total_master"])
-            
-            with col2:
-                st.metric("Completas 1ª Visita", stats["primeira_completa"])
-            
-            with col3:
-                st.metric("Concluídas Revisita", stats["concluidos_revisita"])
-            
-            with col4:
-                st.metric("Pendentes", stats["abertos"], 
-                         delta=f"-{stats['concluidos_revisita']}" if stats['concluidos_revisita'] > 0 else None,
-                         delta_color="inverse")
-            
-            # Exibir tabela de pendências
-            if not df_pendencias.empty:
-                st.subheader("📋 Lista de Pendências")
-                st.dataframe(df_pendencias, use_container_width=True, height=400)
+        
                 
-                # Timestamp para nome do arquivo
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                
-                # Download Excel (se disponível)
-                if arquivo_excel:
-                    nome_arquivo_excel = f"pendencias_{project_data['project_name']}_{timestamp}.xlsx"
-                    st.download_button(
-                        label="📥 Baixar Excel",
-                        data=arquivo_excel,
-                        file_name=nome_arquivo_excel,
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        type="primary",
-                        use_container_width=True
-                    )
-                
-                # Download CSV (sempre disponível)
-                nome_arquivo_csv = f"pendencias_{project_data['project_name']}_{timestamp}.csv"
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Total Master", stats["total_master"])
+        
+        with col2:
+            st.metric("Completas 1ª Visita", stats["primeira_completa"])
+        
+        with col3:
+            st.metric("Concluídas Revisita", stats["concluidos_revisita"])
+        
+        with col4:
+            st.metric("Pendentes", stats["abertos"], 
+                     delta=f"-{stats['concluidos_revisita']}" if stats['concluidos_revisita'] > 0 else None,
+                     delta_color="inverse")
+        
+        # Exibir tabela de pendências
+        if not df_pendencias.empty:
+            st.subheader("📋 Lista de Pendências")
+            st.dataframe(df_pendencias, use_container_width=True, height=400)
+            
+            # Timestamp para nome do arquivo
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # Download Excel (se disponível)
+            if arquivo_excel:
+                nome_arquivo_excel = f"pendencias_{project_data['project_name']}_{timestamp}.xlsx"
                 st.download_button(
-                    label="📥 Baixar CSV" if arquivo_excel else "📥 Baixar Relatório (CSV)",
-                    data=arquivo_csv,
-                    file_name=nome_arquivo_csv,
-                    mime="text/csv",
-                    type="secondary" if arquivo_excel else "primary",
+                    label="📥 Baixar Excel",
+                    data=arquivo_excel,
+                    file_name=nome_arquivo_excel,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    type="primary",
                     use_container_width=True
                 )
-            else:
-                st.info("🎉 Não há pendências! Todos os casos foram concluídos.")
+            
+            # Download CSV (sempre disponível)
+            nome_arquivo_csv = f"pendencias_{project_data['project_name']}_{timestamp}.csv"
+            st.download_button(
+                label="📥 Baixar CSV" if arquivo_excel else "📥 Baixar Relatório (CSV)",
+                data=arquivo_csv,
+                file_name=nome_arquivo_csv,
+                mime="text/csv",
+                type="secondary" if arquivo_excel else "primary",
+                use_container_width=True
+            )
+        else:
+            st.info("🎉 Não há pendências! Todos os casos foram concluídos.")
 
 if __name__ == "__main__":
     main()
