@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from dateutil import parser as dtparser
 from io import BytesIO
 import hashlib
-import openpyxl
+
 # ==================== CONFIGURAÇÕES ====================
 
 CONFIG_FILE = "users_config.json"
