@@ -576,48 +576,84 @@ def main():
     
     st.markdown("---")
     
+    # Inicializar estados da sessão para controlar upload
+    if 'pendencias_processadas' not in st.session_state:
+        st.session_state.pendencias_processadas = False
+    if 'dados_pendencias' not in st.session_state:
+        st.session_state.dados_pendencias = None
+    if 'upload_sucesso' not in st.session_state:
+        st.session_state.upload_sucesso = False
+    
     # Botão principal
     if st.button("🔄 Atualizar Pendências", type="primary", use_container_width=True):
+        st.session_state.upload_sucesso = False  # Reset do estado de upload
         try:
             with st.spinner("Processando dados..."):
                 df_pendencias, stats, arquivo_excel, arquivo_csv = processar_pendencias(project_data)
             
-            # Mostrar estatísticas
+            # Armazenar dados na sessão
+            st.session_state.pendencias_processadas = True
+            st.session_state.dados_pendencias = {
+                'df_pendencias': df_pendencias,
+                'stats': stats,
+                'arquivo_excel': arquivo_excel,
+                'arquivo_csv': arquivo_csv
+            }
+            
             st.success("✅ Processamento concluído!")
-            
-            # Botão de upload para KoBo no topo
-            st.markdown("---")
-            col_upload1, col_upload2 = st.columns([2, 1])
-            
-            with col_upload1:
-                if st.button("☁️ Atualizar Lista no KoBoToolbox", use_container_width=True, type="secondary"):
-                    with st.spinner("Enviando para KoBoToolbox..."):
-                        try:
-                            gerenciar_midia_kobo(
-                                project_data["kobo_base_url"],
-                                project_data["kobo_token"],
-                                project_data["asset_id_revisita"],
-                                "pendencias.csv"
-                            )
-                            
-                            fazer_upload_midia(
-                                project_data["kobo_base_url"],
-                                project_data["kobo_token"],
-                                project_data["asset_id_revisita"],
-                                arquivo_csv,
-                                "pendencias.csv"
-                            )
-                            
-                            st.success("✅ Lista atualizada no KoBoToolbox com sucesso!")
-                            st.info(f"📋 {len(df_pendencias)} pendências enviadas para o formulário de revisitas.")
-                        except Exception as e:
-                            st.error(f"❌ Erro ao atualizar no KoBoToolbox: {str(e)}")
-            
-            with col_upload2:
-                st.metric("Pendências a enviar", len(df_pendencias))
-            
-            st.markdown("---")
-            st.subheader("📈 Estatísticas")
+        
+        except Exception as e:
+            st.error(f"❌ Erro ao processar pendências: {str(e)}")
+            st.exception(e)
+            st.session_state.pendencias_processadas = False
+    
+    # Exibir resultados se já foram processados
+    if st.session_state.pendencias_processadas and st.session_state.dados_pendencias:
+        dados = st.session_state.dados_pendencias
+        df_pendencias = dados['df_pendencias']
+        stats = dados['stats']
+        arquivo_excel = dados['arquivo_excel']
+        arquivo_csv = dados['arquivo_csv']
+        
+        # Botão de upload para KoBo no topo
+        st.markdown("---")
+        col_upload1, col_upload2 = st.columns([2, 1])
+        
+        with col_upload1:
+            if st.button("☁️ Atualizar Lista no KoBoToolbox", use_container_width=True, type="secondary", key="btn_upload_kobo"):
+                with st.spinner("Enviando para KoBoToolbox..."):
+                    try:
+                        gerenciar_midia_kobo(
+                            project_data["kobo_base_url"],
+                            project_data["kobo_token"],
+                            project_data["asset_id_revisita"],
+                            "pendencias.csv"
+                        )
+                        
+                        fazer_upload_midia(
+                            project_data["kobo_base_url"],
+                            project_data["kobo_token"],
+                            project_data["asset_id_revisita"],
+                            arquivo_csv,
+                            "pendencias.csv"
+                        )
+                        
+                        st.session_state.upload_sucesso = True
+                        st.rerun()  # Atualiza a página para mostrar mensagem de sucesso
+                        
+                    except Exception as e:
+                        st.error(f"❌ Erro ao atualizar no KoBoToolbox: {str(e)}")
+        
+        with col_upload2:
+            st.metric("Pendências a enviar", len(df_pendencias))
+        
+        # Mensagem de sucesso do upload (persistente)
+        if st.session_state.upload_sucesso:
+            st.success("✅ Lista atualizada no KoBoToolbox com sucesso!")
+            st.info(f"📋 {len(df_pendencias)} pendências enviadas para o formulário de revisitas.")
+        
+        st.markdown("---")
+        st.subheader("📈 Estatísticas")
             
             col1, col2, col3, col4 = st.columns(4)
             
@@ -667,10 +703,6 @@ def main():
                 )
             else:
                 st.info("🎉 Não há pendências! Todos os casos foram concluídos.")
-        
-        except Exception as e:
-            st.error(f"❌ Erro ao processar pendências: {str(e)}")
-            st.exception(e)
 
 if __name__ == "__main__":
     main()
