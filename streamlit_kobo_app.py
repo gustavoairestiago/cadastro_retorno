@@ -516,11 +516,11 @@ def processar_pendencias(project_config):
     concluidos = (df_consolidado["status_consolidado"] == "Concluído").sum()
     
     estatisticas = {
-        "total_master": len(df_master) + primeira_entrevista_completa,
-        "primeira_completa": primeira_entrevista_completa,
-        "abertos": abertos,
-        "concluidos_revisita": concluidos,
-        "total_revisitas": len(df_revisitas)
+        "total_master": int(len(df_master) + primeira_entrevista_completa),
+        "primeira_completa": int(primeira_entrevista_completa),
+        "abertos": int(abertos),
+        "concluidos_revisita": int(concluidos),
+        "total_revisitas": int(len(df_revisitas))
     }
     
     # 8. Gerar arquivo Excel (com fallback para CSV se openpyxl não estiver disponível)
