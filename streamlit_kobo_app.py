@@ -5,10 +5,12 @@ Sistema de Gestão de Pendências KoBoToolbox - Streamlit App
 ESTRUTURA DE ARQUIVOS NECESSÁRIA:
 - app.py (este arquivo)
 - users_config.json (configuração de usuários e projetos)
+- audit_logs.json (logs de auditoria)
+- processing_history.json (histórico de processamentos)
 - requirements.txt (dependências)
 
 INSTALAÇÃO:
-pip install streamlit pandas requests python-dateutil openpyxl
+pip install streamlit pandas requests python-dateutil openpyxl plotly
 
 EXECUÇÃO:
 streamlit run app.py
@@ -24,14 +26,132 @@ from datetime import datetime, timezone
 from dateutil import parser as dtparser
 from io import BytesIO
 import hashlib
+import shutil
+import plotly.express as px
+import plotly.graph_objects as go
 
 # ==================== CONFIGURAÇÕES ====================
 
 CONFIG_FILE = "users_config.json"
+AUDIT_LOG_FILE = "audit_logs.json"
+HISTORY_FILE = "processing_history.json"
+BACKUP_DIR = "backups"
 PAGE_SIZE = 10000
 
 # Status que finalizam um caso
 STATUS_FINALIZADOS = {"01", "04", "05"}
+
+# Criar diretórios necessários
+os.makedirs(BACKUP_DIR, exist_ok=True)
+
+# ==================== FUNÇÕES DE PERSISTÊNCIA ====================
+
+def ensure_file_exists(filepath, default_content):
+    """Garante que arquivo existe, criando com conteúdo padrão se necessário."""
+    if not os.path.exists(filepath):
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(default_content, f, indent=2, ensure_ascii=False)
+
+def backup_config():
+    """Faz backup do arquivo de configuração antes de modificar."""
+    if os.path.exists(CONFIG_FILE):
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = os.path.join(BACKUP_DIR, f"config_{timestamp}.json")
+        shutil.copy(CONFIG_FILE, backup_path)
+        # Manter apenas os 10 backups mais recentes
+        backups = sorted([f for f in os.listdir(BACKUP_DIR) if f.startswith("config_")])
+        if len(backups) > 10:
+            for old_backup in backups[:-10]:
+                os.remove(os.path.join(BACKUP_DIR, old_backup))
+
+# ==================== FUNÇÕES DE AUDITORIA ====================
+
+def log_audit(user, action, details):
+    """
+    Registra ação no log de auditoria.
+    
+    Args:
+        user: username do usuário
+        action: tipo de ação (login, upload_kobo, create_project, etc)
+        details: dict com detalhes adicionais
+    """
+    ensure_file_exists(AUDIT_LOG_FILE, [])
+    
+    try:
+        with open(AUDIT_LOG_FILE, 'r', encoding='utf-8') as f:
+            logs = json.load(f)
+    except:
+        logs = []
+    
+    log_entry = {
+        "timestamp": datetime.now().isoformat(),
+        "user": user,
+        "action": action,
+        "details": details
+    }
+    
+    logs.append(log_entry)
+    
+    # Manter apenas os últimos 1000 logs
+    if len(logs) > 1000:
+        logs = logs[-1000:]
+    
+    with open(AUDIT_LOG_FILE, 'w', encoding='utf-8') as f:
+        json.dump(logs, f, indent=2, ensure_ascii=False)
+
+def get_recent_logs(limit=50):
+    """Retorna logs mais recentes."""
+    ensure_file_exists(AUDIT_LOG_FILE, [])
+    
+    try:
+        with open(AUDIT_LOG_FILE, 'r', encoding='utf-8') as f:
+            logs = json.load(f)
+        return logs[-limit:][::-1]  # Últimos logs, ordem reversa
+    except:
+        return []
+
+# ==================== FUNÇÕES DE HISTÓRICO ====================
+
+def save_processing_history(project_name, stats, user):
+    """Salva histórico de processamento."""
+    ensure_file_exists(HISTORY_FILE, {})
+    
+    try:
+        with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
+            history = json.load(f)
+    except:
+        history = {}
+    
+    if project_name not in history:
+        history[project_name] = []
+    
+    entry = {
+        "timestamp": datetime.now().isoformat(),
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "time": datetime.now().strftime("%H:%M:%S"),
+        "user": user,
+        "stats": stats
+    }
+    
+    history[project_name].append(entry)
+    
+    # Manter apenas últimos 100 registros por projeto
+    if len(history[project_name]) > 100:
+        history[project_name] = history[project_name][-100:]
+    
+    with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
+        json.dump(history, f, indent=2, ensure_ascii=False)
+
+def get_project_history(project_name):
+    """Retorna histórico de um projeto."""
+    ensure_file_exists(HISTORY_FILE, {})
+    
+    try:
+        with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
+            history = json.load(f)
+        return history.get(project_name, [])
+    except:
+        return []
 
 # ==================== FUNÇÕES DE AUTENTICAÇÃO ====================
 
@@ -41,28 +161,36 @@ def hash_password(password):
 
 def load_users_config():
     """Carrega configuração de usuários do arquivo JSON."""
-    if not os.path.exists(CONFIG_FILE):
-        # Cria arquivo padrão se não existir
-        default_config = {
-            "admins": [
-                {
-                    "username": "admin",
-                    "password_hash": hash_password("admin123"),
-                    "name": "Administrador"
-                }
-            ],
-            "projects": []
-        }
-        save_users_config(default_config)
-        return default_config
+    default_config = {
+        "admins": [
+            {
+                "username": "admin",
+                "password_hash": hash_password("admin123"),
+                "name": "Administrador"
+            }
+        ],
+        "projects": []
+    }
     
-    with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-        return json.load(f)
+    ensure_file_exists(CONFIG_FILE, default_config)
+    
+    try:
+        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        st.error(f"Erro ao carregar configuração: {e}")
+        return default_config
 
 def save_users_config(config):
     """Salva configuração de usuários no arquivo JSON."""
+    backup_config()  # Backup antes de salvar
+    
     with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
         json.dump(config, f, indent=2, ensure_ascii=False)
+    
+    # Forçar leitura do disco na próxima vez
+    if 'config_cache' in st.session_state:
+        del st.session_state['config_cache']
 
 def authenticate_user(username, password):
     """
@@ -77,14 +205,56 @@ def authenticate_user(username, password):
     # Verifica se é admin
     for admin in config.get("admins", []):
         if admin["username"] == username and admin["password_hash"] == password_hash:
+            log_audit(username, "login", {"role": "admin", "success": True})
             return True, admin, True
     
     # Verifica se é analista de projeto
     for project in config.get("projects", []):
         if project["analyst_username"] == username and project["analyst_password_hash"] == password_hash:
+            log_audit(username, "login", {"role": "analyst", "project": project["project_name"], "success": True})
             return True, project, False
     
+    log_audit(username, "login", {"success": False})
     return False, None, False
+
+# ==================== FUNÇÕES DE VALIDAÇÃO KOBO ====================
+
+def validar_conexao_kobo(base_url, token, asset_id_master, asset_id_revisita):
+    """
+    Valida credenciais e IDs dos formulários KoBoToolbox.
+    
+    Returns:
+        tuple: (is_valid, error_message)
+    """
+    headers = {
+        "Authorization": f"Token {token}",
+        "Accept": "application/json"
+    }
+    
+    try:
+        # Testa conexão geral
+        response = requests.get(f"{base_url}/api/v2/assets/", headers=headers, timeout=10)
+        if not response.ok:
+            return False, f"Erro na autenticação: Token inválido ou URL incorreta (Status {response.status_code})"
+        
+        # Testa Form Master
+        response = requests.get(f"{base_url}/api/v2/assets/{asset_id_master}/", headers=headers, timeout=10)
+        if not response.ok:
+            return False, f"Formulário Master não encontrado (ID: {asset_id_master})"
+        
+        # Testa Form Revisita
+        response = requests.get(f"{base_url}/api/v2/assets/{asset_id_revisita}/", headers=headers, timeout=10)
+        if not response.ok:
+            return False, f"Formulário de Revisita não encontrado (ID: {asset_id_revisita})"
+        
+        return True, "Conexão validada com sucesso!"
+    
+    except requests.exceptions.Timeout:
+        return False, "Timeout: Servidor KoBo não respondeu a tempo"
+    except requests.exceptions.ConnectionError:
+        return False, "Erro de conexão: Verifique a URL e sua conexão com a internet"
+    except Exception as e:
+        return False, f"Erro inesperado: {str(e)}"
 
 # ==================== FUNÇÕES DO KOBO ====================
 
@@ -250,7 +420,6 @@ def fazer_upload_midia(base_url, token, asset_id, arquivo_bytes, nome_arquivo):
     
     if not resposta.ok:
         raise RuntimeError(f"Erro no upload [{resposta.status_code}]: {resposta.text}")
-
 def processar_pendencias(project_config):
     """
     Processa pendências de um projeto específico.
@@ -371,6 +540,71 @@ def processar_pendencias(project_config):
     
     return df_pendencias, estatisticas, arquivo_excel, arquivo_csv
 
+# ==================== FUNÇÕES DE VISUALIZAÇÃO ====================
+
+def criar_dashboard_graficos(history_data, stats):
+    """Cria dashboard com gráficos de evolução."""
+    if not history_data or len(history_data) < 2:
+        st.info("📊 Dashboard de evolução estará disponível após mais processamentos.")
+        return
+    
+    # Preparar dados para gráficos
+    df_history = pd.DataFrame(history_data)
+    df_history['date'] = pd.to_datetime(df_history['date'])
+    
+    # Extrair estatísticas
+    df_history['pendentes'] = df_history['stats'].apply(lambda x: x.get('abertos', 0))
+    df_history['concluidos'] = df_history['stats'].apply(lambda x: x.get('concluidos_revisita', 0))
+    df_history['total'] = df_history['stats'].apply(lambda x: x.get('total_master', 0))
+    
+    # Gráfico 1: Evolução de Pendências
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        fig_line = px.line(
+            df_history, 
+            x='date', 
+            y='pendentes',
+            title='📉 Evolução de Pendências ao Longo do Tempo',
+            labels={'date': 'Data', 'pendentes': 'Número de Pendências'},
+            markers=True
+        )
+        fig_line.update_traces(line_color='#FF4B4B')
+        st.plotly_chart(fig_line, use_container_width=True)
+    
+    with col2:
+        # Gráfico 2: Status Atual (Pizza)
+        fig_pie = go.Figure(data=[go.Pie(
+            labels=['Pendentes', 'Concluídas em Revisita', 'Completas 1ª Visita'],
+            values=[stats['abertos'], stats['concluidos_revisita'], stats['primeira_completa']],
+            hole=0.4,
+            marker_colors=['#FF4B4B', '#00CC88', '#0068C9']
+        )])
+        fig_pie.update_layout(title_text='📊 Distribuição de Status Atual')
+        st.plotly_chart(fig_pie, use_container_width=True)
+    
+    # Gráfico 3: Barras comparativas
+    fig_bar = go.Figure()
+    fig_bar.add_trace(go.Bar(
+        x=df_history['date'],
+        y=df_history['pendentes'],
+        name='Pendentes',
+        marker_color='#FF4B4B'
+    ))
+    fig_bar.add_trace(go.Bar(
+        x=df_history['date'],
+        y=df_history['concluidos'],
+        name='Concluídos',
+        marker_color='#00CC88'
+    ))
+    fig_bar.update_layout(
+        title='📊 Comparação: Pendentes vs Concluídos',
+        xaxis_title='Data',
+        yaxis_title='Quantidade',
+        barmode='group'
+    )
+    st.plotly_chart(fig_bar, use_container_width=True)
+
 # ==================== INTERFACE STREAMLIT ====================
 
 def main():
@@ -425,6 +659,7 @@ def main():
         st.markdown(f"**Bem-vindo(a), {st.session_state.user_data['name']}!**")
         
         if st.button("🚪 Sair", type="secondary"):
+            log_audit(st.session_state.user_data['username'], "logout", {})
             st.session_state.authenticated = False
             st.session_state.user_data = None
             st.session_state.is_admin = False
@@ -434,7 +669,7 @@ def main():
         
         config = load_users_config()
         
-        tab1, tab2, tab3 = st.tabs(["📊 Projetos", "➕ Novo Projeto", "🔑 Gerenciar Admins"])
+        tab1, tab2, tab3, tab4 = st.tabs(["📊 Projetos", "➕ Novo Projeto", "🔑 Gerenciar Admins", "📜 Logs de Auditoria"])
         
         # TAB 1: Listar Projetos
         with tab1:
@@ -456,9 +691,15 @@ def main():
                         
                         with col2:
                             if st.button("🗑️ Remover", key=f"remove_{idx}"):
+                                log_audit(
+                                    st.session_state.user_data['username'],
+                                    "delete_project",
+                                    {"project_name": project['project_name']}
+                                )
                                 config["projects"].pop(idx)
                                 save_users_config(config)
                                 st.success("Projeto removido!")
+                                time.sleep(1)
                                 st.rerun()
         
         # TAB 2: Novo Projeto
@@ -477,47 +718,90 @@ def main():
                     ["https://eu.kobotoolbox.org", "https://kf.kobotoolbox.org", 
                      "https://kobo.humanitarianresponse.info"]
                 )
-                kobo_token = st.text_input("Token da API*", type="password")
-                asset_id_master = st.text_input("ID do Formulário Master*")
-                asset_id_revisita = st.text_input("ID do Formulário de Revisita*")
+                kobo_token = st.text_input("Token da API*", type="password", 
+                                          help="Gere em: https://[instancia]/token/")
+                asset_id_master = st.text_input("ID do Formulário Master*",
+                                               help="Encontre em: KoBo > Formulário > Detalhes do projeto")
+                asset_id_revisita = st.text_input("ID do Formulário de Revisita*",
+                                                 help="Encontre em: KoBo > Formulário > Detalhes do projeto")
                 
-                submitted = st.form_submit_button("✅ Cadastrar Projeto", type="primary")
+                col_submit, col_validate = st.columns([1, 1])
+                
+                with col_validate:
+                    validar = st.form_submit_button("🔍 Validar Conexão", type="secondary")
+                
+                with col_submit:
+                    submitted = st.form_submit_button("✅ Cadastrar Projeto", type="primary")
+                
+                if validar:
+                    if all([kobo_base_url, kobo_token, asset_id_master, asset_id_revisita]):
+                        with st.spinner("Validando conexão com KoBoToolbox..."):
+                            is_valid, message = validar_conexao_kobo(
+                                kobo_base_url, kobo_token, asset_id_master, asset_id_revisita
+                            )
+                            
+                            if is_valid:
+                                st.success(f"✅ {message}")
+                            else:
+                                st.error(f"❌ {message}")
+                    else:
+                        st.warning("⚠️ Preencha as configurações do KoBo para validar")
                 
                 if submitted:
                     if all([project_name, analyst_name, analyst_username, analyst_password, 
                            kobo_token, asset_id_master, asset_id_revisita]):
                         
-                        new_project = {
-                            "project_name": project_name,
-                            "analyst_name": analyst_name,
-                            "analyst_username": analyst_username,
-                            "analyst_password_hash": hash_password(analyst_password),
-                            "kobo_base_url": kobo_base_url,
-                            "kobo_token": kobo_token,
-                            "asset_id_master": asset_id_master,
-                            "asset_id_revisita": asset_id_revisita,
-                            "campos": {
-                                "household_id": "household_id",
-                                "status_master": "info_gerais/status",
-                                "status_revisita": "info_gerais/status",
-                                "tentativa_n": "tentativa_n",
-                                "censo": "info_gerais/setor_censo",
-                                "subsetor": "info_gerais/subsetor",
-                                "tipo_imovel": "info_gerais/tipo_imovel",
-                                "tipo_logradouro": "info_gerais/tipo_logradouro",
-                                "endereco": "info_gerais/endereco_name",
-                                "numero": "info_gerais/numero",
-                                "modificador": "info_gerais/modificador",
-                                "complemento": "info_gerais/complemento",
-                                "referencia": "referencia"
-                            }
-                        }
+                        # Validar antes de cadastrar
+                        with st.spinner("Validando credenciais..."):
+                            is_valid, message = validar_conexao_kobo(
+                                kobo_base_url, kobo_token, asset_id_master, asset_id_revisita
+                            )
                         
-                        config["projects"].append(new_project)
-                        save_users_config(config)
-                        st.success(f"✅ Projeto '{project_name}' cadastrado com sucesso!")
-                        time.sleep(2)
-                        st.rerun()
+                        if not is_valid:
+                            st.error(f"❌ Validação falhou: {message}")
+                            st.warning("⚠️ Corrija as credenciais antes de cadastrar o projeto.")
+                        else:
+                            new_project = {
+                                "project_name": project_name,
+                                "analyst_name": analyst_name,
+                                "analyst_username": analyst_username,
+                                "analyst_password_hash": hash_password(analyst_password),
+                                "kobo_base_url": kobo_base_url,
+                                "kobo_token": kobo_token,
+                                "asset_id_master": asset_id_master,
+                                "asset_id_revisita": asset_id_revisita,
+                                "campos": {
+                                    "household_id": "household_id",
+                                    "status_master": "info_gerais/status",
+                                    "status_revisita": "info_gerais/status",
+                                    "tentativa_n": "tentativa_n",
+                                    "censo": "info_gerais/setor_censo",
+                                    "subsetor": "info_gerais/subsetor",
+                                    "tipo_imovel": "info_gerais/tipo_imovel",
+                                    "tipo_logradouro": "info_gerais/tipo_logradouro",
+                                    "endereco": "info_gerais/endereco_name",
+                                    "numero": "info_gerais/numero",
+                                    "modificador": "info_gerais/modificador",
+                                    "complemento": "info_gerais/complemento",
+                                    "referencia": "referencia"
+                                }
+                            }
+                            
+                            config["projects"].append(new_project)
+                            save_users_config(config)
+                            
+                            log_audit(
+                                st.session_state.user_data['username'],
+                                "create_project",
+                                {
+                                    "project_name": project_name,
+                                    "analyst_username": analyst_username
+                                }
+                            )
+                            
+                            st.success(f"✅ Projeto '{project_name}' cadastrado com sucesso!")
+                            time.sleep(2)
+                            st.rerun()
                     else:
                         st.error("❌ Preencha todos os campos obrigatórios")
         
@@ -551,10 +835,67 @@ def main():
                         
                         config["admins"].append(new_admin)
                         save_users_config(config)
+                        
+                        log_audit(
+                            st.session_state.user_data['username'],
+                            "create_admin",
+                            {"new_admin_username": admin_username}
+                        )
+                        
                         st.success("✅ Administrador adicionado!")
+                        time.sleep(1)
                         st.rerun()
                     else:
                         st.error("❌ Preencha todos os campos")
+        
+        # TAB 4: Logs de Auditoria
+        with tab4:
+            st.subheader("📜 Logs de Auditoria")
+            
+            logs = get_recent_logs(100)
+            
+            if logs:
+                # Filtros
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    users = list(set([log['user'] for log in logs]))
+                    selected_user = st.selectbox("Filtrar por Usuário", ["Todos"] + users)
+                
+                with col2:
+                    actions = list(set([log['action'] for log in logs]))
+                    selected_action = st.selectbox("Filtrar por Ação", ["Todas"] + actions)
+                
+                with col3:
+                    limit = st.number_input("Mostrar últimos N logs", min_value=10, max_value=100, value=50)
+                
+                # Filtrar logs
+                filtered_logs = logs[:limit]
+                if selected_user != "Todos":
+                    filtered_logs = [log for log in filtered_logs if log['user'] == selected_user]
+                if selected_action != "Todas":
+                    filtered_logs = [log for log in filtered_logs if log['action'] == selected_action]
+                
+                # Exibir logs
+                for log in filtered_logs:
+                    timestamp = datetime.fromisoformat(log['timestamp']).strftime("%Y-%m-%d %H:%M:%S")
+                    
+                    action_icons = {
+                        "login": "🔐",
+                        "logout": "🚪",
+                        "create_project": "➕",
+                        "delete_project": "🗑️",
+                        "create_admin": "👨‍💼",
+                        "process_pendencias": "🔄",
+                        "upload_kobo": "☁️"
+                    }
+                    
+                    icon = action_icons.get(log['action'], "📝")
+                    
+                    with st.expander(f"{icon} {timestamp} - {log['user']} - {log['action']}"):
+                        st.json(log['details'])
+            else:
+                st.info("Nenhum log registrado ainda.")
         
         return
     
@@ -569,6 +910,7 @@ def main():
     col1, col2 = st.columns([1, 4])
     with col1:
         if st.button("🚪 Sair", type="secondary"):
+            log_audit(project_data['analyst_username'], "logout", {})
             st.session_state.authenticated = False
             st.session_state.user_data = None
             st.session_state.is_admin = False
@@ -599,6 +941,24 @@ def main():
                 'arquivo_excel': arquivo_excel,
                 'arquivo_csv': arquivo_csv
             }
+            
+            # Salvar no histórico
+            save_processing_history(
+                project_data['project_name'],
+                stats,
+                project_data['analyst_username']
+            )
+            
+            # Log de auditoria
+            log_audit(
+                project_data['analyst_username'],
+                "process_pendencias",
+                {
+                    "project": project_data['project_name'],
+                    "pendencias": stats['abertos'],
+                    "concluidos": stats['concluidos_revisita']
+                }
+            )
             
             st.success("✅ Processamento concluído!")
         
@@ -638,6 +998,16 @@ def main():
                             "pendencias.csv"
                         )
                         
+                        # Log de auditoria
+                        log_audit(
+                            project_data['analyst_username'],
+                            "upload_kobo",
+                            {
+                                "project": project_data['project_name'],
+                                "records_uploaded": len(df_pendencias)
+                            }
+                        )
+                        
                         st.session_state.upload_sucesso = True
                         st.rerun()  # Atualiza a página para mostrar mensagem de sucesso
                         
@@ -655,7 +1025,6 @@ def main():
         st.markdown("---")
         st.subheader("📈 Estatísticas")
         
-                
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
@@ -672,7 +1041,14 @@ def main():
                      delta=f"-{stats['concluidos_revisita']}" if stats['concluidos_revisita'] > 0 else None,
                      delta_color="inverse")
         
+        # Dashboard com gráficos
+        st.markdown("---")
+        st.subheader("📊 Dashboard de Evolução")
+        history = get_project_history(project_data['project_name'])
+        criar_dashboard_graficos(history, stats)
+        
         # Exibir tabela de pendências
+        st.markdown("---")
         if not df_pendencias.empty:
             st.subheader("📋 Lista de Pendências")
             st.dataframe(df_pendencias, use_container_width=True, height=400)
@@ -704,6 +1080,6 @@ def main():
             )
         else:
             st.info("🎉 Não há pendências! Todos os casos foram concluídos.")
-
+            
 if __name__ == "__main__":
     main()
