@@ -544,7 +544,7 @@ def processar_pendencias(project_config):
 
 def criar_dashboard_graficos(history_data, stats):
     """Cria dashboard com gráficos de evolução."""
-    if not history_data or len(history_data) < 2:
+    if not history_data or len(history_data) < 0:
         st.info("📊 Dashboard de evolução estará disponível após mais processamentos.")
         return
     
